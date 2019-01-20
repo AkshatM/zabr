@@ -1,0 +1,7 @@
+[package]
+name = "zabr"
+version = "0.1.0"
+authors = ["Akshat Mahajan <akshatm.bkk@gmail.com>"]
+
+[dependencies]
+actix = "0.7"

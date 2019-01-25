@@ -1,10 +1,3 @@
-use std::fs::File;
-use std::vec::Vec;
-use std::any::Any;
-use std::path::Path;
-use std::net::{SocketAddr};
-use actix::{Addr, Arbiter}
-
 //! An implementation of Zookeeper Atomic Broadcast protocol (or ZAB) in Rust.
 //!
 //! The `zabr` library replicates data across multiple nodes in a cluster, provided all nodes are using `zabr`, are aware of each other,
@@ -24,14 +17,17 @@ use actix::{Addr, Arbiter}
 //! The `zabr` log is persisted to disk - it is thus possible for applications to recover simply by reading the transaction log, and 
 //! rejoin the cluster.
 
+use std::vec::Vec;
+use std::any::Any;
+use std::net::{SocketAddr};
+use actix::prelude::*;
+
 /// A PeerInterface is how you're expected to start and communicate with your Peer.
 ///
 /// Applications are expected to supply configuration details (specificed in `zabr::Config`) to the PeerInterface before starting it.
 /// Internally, PeerInterfaces launch a separate thread in which the Peer runs, and acts as a message passer.
 #[derive(Default)]
-pub struct PeerInterface {
-	peerAddress: Some(Addr),
-};
+pub struct PeerInterface {}
 
 impl PeerInterface {
 	
@@ -39,22 +35,28 @@ impl PeerInterface {
 	/// Applications must configure their Peer appropriately before starting.
 	pub fn start(&mut self, config: Config) -> () {
 
-		// TODO: Implement reading from Config.
-		let peer = Peer {
-			history: Vec<Transaction>::new(),
-			acceptedEpoch: 0,
-			currentEpoch: 0,
-			peerState: PeerState::Election,
-			portNumber: u16,
-			remotePeerConnections: Vec<SocketAddr>::new(),
-			applicationCallback = config.applicationCallback,
-		};
+		Arbiter::start(move |_| {
+			// TODO: Implement reading from Config.
+			let peer = Peer {
+				history: Vec::new(),
+				accepted_epoch: 0,
+				current_epoch: 0,
+				peer_state: PeerState::Election,
+				port_number: 5432,
+				peer_directory: String::from("/etc/zabr"),
+				remote_peer_connections: Vec::new(),
+				application_callback: config.application_callback,
+			};
 
-		self.peerAddress = Arbiter::new("PeerThread").start(|_| peer::start);
+			return peer;
+		});
+
+		return ();
 	}
 
-	pub fn submit(&self, message: Any) -> Result<()> {
-		self.peerAddress.try_send(Write(message))?;
+	// TODO: Implement this.
+	pub fn submit(&self) {	
+	
 	}
 }
 
@@ -67,26 +69,31 @@ struct Peer {
 	history: Vec<Transaction>,
 	/// The epoch number the last leader election was initiated with. Obviously can be ahead of currentEpoch once a leader election 
 	/// is initiated after the last election is completed. currentEpoch and acceptedEpoch should both converge eventually.
-    acceptedEpoch: u64,
+    accepted_epoch: u64,
     /// The epoch number that the last leader election was completed with.
-    currentEpoch: u64,
+    current_epoch: u64,
 	/// What state a peer is in at runtime. Is always initialized with state peerState::Election at system start, but will change
 	/// dynamically over system runtime. 
-	peerState: PeerState,
+	peer_state: PeerState,
 	/// The port number Peer will bind to for incoming messages.
-	portNumber: u16,
+	port_number: u16,
 	/// Active socket connections maintained against all the other nodes.
-	remotePeerConnections: Vec<SocketAddr>,
+	remote_peer_connections: Vec<SocketAddr>,
 	/// Data + configuration directory managed by this peer, used for recovery purposes.
-	peerDirectory: Path,
+	peer_directory: String,
 	/// Applications can register a callback that handles successful replicated updates to the write log. 
-	applicationCallback: fn(cb: CallbackMessage) -> Any
+	application_callback: fn(cb: CallbackMessage) -> ()
 }
 
 enum PeerState {
 	Election,
 	Follower,
 	Leader
+}
+
+/// Applications receive a CallbackMessage in their registered callback.
+struct CallbackMessage {
+	message: Box<dyn Any>
 }
 
 impl Peer {
@@ -100,6 +107,11 @@ impl Peer {
 
 }
 
+impl Actor for Peer {
+    type Context = Context<Self>;
+}
+
+
 /// Config struct is a struct that the application can use to configure Peers.
 /// Configs take the following options:
 ///
@@ -111,11 +123,12 @@ impl Peer {
 ///	   full read/write permissions by the application, else peer will panic.
 /// 4. A callback that lets the application do something when `zabr` successfully replicates
 ///    a pending update.
-struct Config {
-	remotePeers: Vec<String>,
-	peerPort: u16,
-	peerDirectory: Path,
-	applicationCallback: fn(cb: CallbackMessage) -> Any
+#[derive(Clone)]
+pub struct Config {
+	remote_peers: Vec<String>,
+	peer_port: u16,
+	peer_directory: String,
+	application_callback: fn(cb: CallbackMessage) -> ()
 }
 
 /// Zookeeper IDs (zxids) mark every transaction with a unique identifier.
@@ -130,24 +143,6 @@ struct ZxID {
 /// Transactions are the fundamental change a primary broadcasts to its followers.
 /// They contain a `state` variable that contains the new state of the Zookeeper data tree.
 struct Transaction {
-	state: Any,
+	state: Box <dyn Any>,
     zxid: ZxID
-}
-
-struct Write {
-	message: Any,
-};
-
-impl Message for Write {
-	type Result = ();
-}
-
-impl Handler<Write> for Peer {
-	type Result = ();
-
-	/// Handle write messages.
-	// TODO: Fill this out.
-	fn handle(&mut self, msg: Write, ctx: &mut Context<Self>) -> Self::Result {
-	
-	}
 }

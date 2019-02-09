@@ -19,7 +19,7 @@
 
 use std::vec::Vec;
 use std::any::Any;
-use std::net::{SocketAddr};
+use std::net::{SocketAddr,ToSocketAddrs};
 use crossbeam::channel::unbounded;
 
 /// A PeerInterface is how you're expected to start and communicate with your Peer.
@@ -43,10 +43,13 @@ impl PeerInterface {
 				accepted_epoch: 0,
 				current_epoch: 0,
 				peer_state: PeerState::Election,
-				port_number: 2888, // Zookeeper default port to converse with other hosts
-				remote_peer_connections: Vec::new(),
-				peer_directory: "/etc/zabr".to_string(),
-				application_callback: |cb| {}
+				port_number: config.peer_port,
+				remote_peer_connections: config.remote_peers
+										 .iter()
+                                         .map(|s| s.as_str().to_socket_addrs().unwrap())
+										 .collect(),
+				peer_directory: config.peer_directory,
+				application_callback: config.application_callback
 			};
 
 			let (sender, receiver) = unbounded();
@@ -130,6 +133,19 @@ pub struct Config {
 	peer_port: u16,
 	peer_directory: String,
 	application_callback: fn(cb: CallbackMessage) -> ()
+}
+
+impl Default for Config {
+	fn default() -> Config {
+		return Config {
+			remote_peers: Vec::new(),
+			// Default port is same as Zookeeper's default port.
+			peer_port: 2888,
+			// TODO: Support Windows instead of POSIX-compliant machines also.
+			peer_directory: "/etc/zabr".to_string(),
+			application_callback: |cb| {},
+		}
+	}
 }
 
 /// Zookeeper IDs (zxids) mark every transaction with a unique identifier.

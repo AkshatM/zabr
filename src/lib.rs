@@ -20,38 +20,41 @@
 use std::vec::Vec;
 use std::any::Any;
 use std::net::{SocketAddr};
-use actix::prelude::*;
+use crossbeam::channel::unbounded;
 
 /// A PeerInterface is how you're expected to start and communicate with your Peer.
 ///
 /// Applications are expected to supply configuration details (specificed in `zabr::Config`) to the PeerInterface before starting it.
 /// Internally, PeerInterfaces launch a separate thread in which the Peer runs, and acts as a message passer.
 #[derive(Default)]
-pub struct PeerInterface {}
+pub struct PeerInterface {
+	peer_handle: Option<crossbeam::channel::Sender<Transaction>>
+}
 
 impl PeerInterface {
-	
 	/// Launches a Peer in a separate thread. 
 	/// Applications must configure their Peer appropriately before starting.
 	pub fn start(&mut self, config: Config) -> () {
 
-		Arbiter::start(move |_| {
-			// TODO: Implement reading from Config.
+		if self.peer_handle.is_none() {
+			// TODO: Read from config and data record
 			let peer = Peer {
 				history: Vec::new(),
 				accepted_epoch: 0,
 				current_epoch: 0,
 				peer_state: PeerState::Election,
-				port_number: 5432,
-				peer_directory: String::from("/etc/zabr"),
+				port_number: 2888, // Zookeeper default port to converse with other hosts
 				remote_peer_connections: Vec::new(),
-				application_callback: config.application_callback,
+				peer_directory: "/etc/zabr".to_string(),
+				application_callback: |cb| {}
 			};
 
-			return peer;
-		});
+			let (sender, receiver) = unbounded();
 
-		return ();
+			peer.start(receiver);
+
+			self.peer_handle = Some(sender);
+		}
 	}
 
 	// TODO: Implement this.
@@ -101,14 +104,12 @@ impl Peer {
 	/// Binds to a port. Sets up handlers to process messages on port, and broadcasts messages to the world.
 	/// Persists to disk after every successful transaction. Basically gets the show on the road. 
 	// TODO: Fill this out
-    fn start(&self) {
+    fn start(&self, receiver: crossbeam::channel::Receiver<Transaction>) {
 
+		
+		
 	}
 
-}
-
-impl Actor for Peer {
-    type Context = Context<Self>;
 }
 
 

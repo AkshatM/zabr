@@ -19,8 +19,17 @@
 
 use std::vec::Vec;
 use std::any::Any;
-use std::net::{SocketAddr};
+use std::fs::{File, read_to_string};
+use std::path::Path;
+use serde::{Serialize, Deserialize};
+use std::net::{SocketAddr,ToSocketAddrs};
 use crossbeam::channel::unbounded;
+use std::io::{BufRead, BufReader, Result};
+use serde_json;
+
+const TRANSACTION_LOG: &str = "transaction_log";
+const ACCEPTED_EPOCH_LOG: &str = "epoch_of_last_initiated_leader_election";
+const CURRENT_EPOCH_LOG: &str = "epoch_of_last_completed_leader_election";
 
 /// A PeerInterface is how you're expected to start and communicate with your Peer.
 ///
@@ -31,22 +40,64 @@ pub struct PeerInterface {
 	peer_handle: Option<crossbeam::channel::Sender<Transaction>>
 }
 
+/// This function returns the persisted state of the peer from the local filesystem.
+/// All data is pulled from files generated under a directory specified by `path`.
+/// If no files exist, default values are returned.
+fn recover_from_crash(path: &String) -> (Vec<Transaction>, u64, u64) {
+
+	let root_directory = Path::new(path);
+
+	// File contents: newline separated list of JSON-serialized structs.
+	let transaction_log = root_directory.join(TRANSACTION_LOG);
+	// File contents: A single number written to a file.
+    let accepted_epoch_log = root_directory.join(ACCEPTED_EPOCH_LOG);
+    // File contents: A single number written to a file.
+    let current_epoch_log = root_directory.join(CURRENT_EPOCH_LOG);
+
+	let accepted_epoch: u64 = match read_to_string(accepted_epoch_log) {
+		Ok(s) => s.parse().unwrap_or(0),
+		_ => 0,
+	};
+
+	let current_epoch: u64 = match read_to_string(current_epoch_log)  {
+		Ok(s) => s.parse().unwrap_or(0),
+		_ => 0,
+	};
+
+	let transaction_log_contents = match read_to_string(transaction_log) {
+		Ok(s) => s,
+		_ => "".to_string()
+	};
+
+    let mut history: Vec<Transaction> = Vec::new();
+	for line in transaction_log_contents.split(&"\n") {
+		// Should panic if transaction log is corrupted 
+		let transaction: Transaction = serde_json::from_str(&line).unwrap();
+        history.push(transaction);
+	}
+
+	return (history, accepted_epoch, current_epoch);
+
+}
+
 impl PeerInterface {
 	/// Launches a Peer in a separate thread. 
 	/// Applications must configure their Peer appropriately before starting.
 	pub fn start(&mut self, config: Config) -> () {
 
 		if self.peer_handle.is_none() {
-			// TODO: Read from config and data record
+
+            let (crash_history, acc_epoch_at_crash, cur_epoch_at_crash) = recover_from_crash(&config.peer_directory);
+
 			let peer = Peer {
-				history: Vec::new(),
-				accepted_epoch: 0,
-				current_epoch: 0,
+				history: crash_history,
+				accepted_epoch: acc_epoch_at_crash,
+				current_epoch: cur_epoch_at_crash,
 				peer_state: PeerState::Election,
-				port_number: 2888, // Zookeeper default port to converse with other hosts
-				remote_peer_connections: Vec::new(),
-				peer_directory: "/etc/zabr".to_string(),
-				application_callback: |cb| {}
+				port_number: config.peer_port,
+				remote_peers: config.remote_peers,
+				peer_directory: config.peer_directory,
+				application_callback: config.application_callback
 			};
 
 			let (sender, receiver) = unbounded();
@@ -59,7 +110,7 @@ impl PeerInterface {
 
 	// TODO: Implement this.
 	pub fn submit(&self) {	
-	
+		
 	}
 }
 
@@ -80,8 +131,8 @@ struct Peer {
 	peer_state: PeerState,
 	/// The port number Peer will bind to for incoming messages.
 	port_number: u16,
-	/// Active socket connections maintained against all the other nodes.
-	remote_peer_connections: Vec<SocketAddr>,
+	/// List of node addresses with ports to connect to.
+	remote_peers: Vec<String>,
 	/// Data + configuration directory managed by this peer, used for recovery purposes.
 	peer_directory: String,
 	/// Applications can register a callback that handles successful replicated updates to the write log. 
@@ -132,10 +183,24 @@ pub struct Config {
 	application_callback: fn(cb: CallbackMessage) -> ()
 }
 
+impl Default for Config {
+	fn default() -> Config {
+		return Config {
+			remote_peers: Vec::new(),
+			// Default port is same as Zookeeper's default port.
+			peer_port: 2888,
+			// TODO: Support Windows instead of POSIX-compliant machines also.
+			peer_directory: "/etc/zabr".to_string(),
+			application_callback: |cb| {},
+		}
+	}
+}
+
 /// Zookeeper IDs (zxids) mark every transaction with a unique identifier.
 /// This identifier can be compared across new leaders by means of an `epoch`
 /// variable, which is incremented on election of a new primary. The `counter`
 /// variable, on the other hand, uniqiely identifies transactions within an epoch.
+#[derive(Serialize, Deserialize)]
 struct ZxID {
 	epoch: i64,
 	counter: u64
@@ -143,7 +208,10 @@ struct ZxID {
 
 /// Transactions are the fundamental change a primary broadcasts to its followers.
 /// They contain a `state` variable that contains the new state of the Zookeeper data tree.
-struct Transaction {
-	state: Box <dyn Any>,
+/// All data in a Transaction's `state` should be serialized to a stringified format.
+// TODO: Extend serialization support beyond just raw string representation.
+#[derive(Serialize, Deserialize)]
+struct Transaction{
+	record: String,
     zxid: ZxID
 }
